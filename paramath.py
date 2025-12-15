@@ -10,6 +10,9 @@ import builtins
 import math
 
 
+PROGRAM_VERSION = "2.2.1"
+
+
 VAR_NAMES = list("abcdefxym") + ["ans", "pi", "e"]
 BUILTIN_FUNCS = ["abs", "sin", "cos", "tan", "arcsin", "arccos", "arctan"]
 BASIC_OPS = {"+", "-", "*", "/", "**"} | set(BUILTIN_FUNCS)
@@ -331,7 +334,7 @@ def compile_value(
 
     try:
         result = num(expr_str)
-        debug_print(f"direct numeric conversion: {result}")
+        debug_print(f"direct numeric conPROGRAM_VERSION: {result}")
         return result
     except ValueError:
         pass
@@ -1762,6 +1765,13 @@ examples:
         help="Input paramath file",
     )
     parser.add_argument(
+        "-v",
+        "--version",
+        action="version",
+        version=f"Paramath {PROGRAM_VERSION}",
+        help="Prints the Paramath version number and exits",
+    )
+    parser.add_argument(
         "-o",
         "--output",
         default="math.txt",
@@ -1775,7 +1785,6 @@ examples:
         "-V", "--verbose", action="store_true", help="enable verbose output"
     )
     parser.add_argument("-L", "--logfile", metavar="FILE", help="write logs to FILE")
-
     args = parser.parse_args()
 
     global VERBOSE, DEBUG, LOGFILE
@@ -1785,10 +1794,9 @@ examples:
 
     if LOGFILE:
         with open(LOGFILE, "w") as f:
-            f.write("")
+            f.write(f"Paramath Compiler {PROGRAM_VERSION}")
 
     try:
-        print(f"=== paramath compiler v2.2.1 ===")
         if args.filepath is None:
             raise ParserError("No path to file provided, quitting")
         print(f"reading: {args.filepath}")
