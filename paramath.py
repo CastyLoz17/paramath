@@ -328,13 +328,14 @@ def compile_value(
     line_num: int,
     config: ProgramConfig,
     loop_vars: Optional[Dict[str, Any]] = None,
+    safe_eval: bool = False,
 ) -> float:
     expr_str = expr_str.strip()
     verbose_print(f"compiling value: {expr_str[:50]}...")
 
     try:
         result = num(expr_str)
-        debug_print(f"direct numeric conPROGRAM_VERSION: {result}")
+        debug_print(f"direct numeric conversion: {result}")
         return result
     except ValueError:
         pass
@@ -358,23 +359,68 @@ def compile_value(
     }
 
     globals_obj = type("Globals", (), eval_globals)()
-    local_obj = type("Local", (), loop_vars)()
-    math_obj = type("Math", (), math_funcs)()
+    locals_obj = type("Local", (), loop_vars)()
+    print(loop_vars)
 
     eval_namespace = {
         "__builtins__": builtins.__dict__,
         "globals": globals_obj,
-        "local": local_obj,
-        "math": math_obj,
+        "locals": locals_obj,
+        **math_funcs,
     }
 
+    possible_result = None
     try:
         print("    " + expr_str)
         eval_result = eval(expr_str, eval_namespace)
+        print("    " + str(eval_result))
         result = num(eval_result)
         debug_print(f"eval'd to: {result}")
-        return result
-    except (ValueError, TypeError) as e:
+        if safe_eval:
+            possible_result = result
+        else:
+            return result
+    except NameError as e:
+        error_msg = str(e)
+        if "is not defined" in error_msg:
+            var_name = error_msg.split("'")[1] if "'" in error_msg else "unknown"
+            if var_name == "local":
+                raise ParserError(
+                    "use 'locals.var' instead of 'local.var'",
+                    line_num,
+                )
+            if var_name == "global":
+                raise ParserError(
+                    "use 'globals.var' instead of 'global.var'",
+                    line_num,
+                )
+
+            if var_name in eval_globals:
+                raise ParserError(
+                    f"cannot access global '{var_name}' directly! use 'globals.{var_name}' instead",
+                    line_num,
+                )
+            elif var_name in loop_vars:
+                raise ParserError(
+                    f"cannot access local '{var_name}' directly! use 'locals.{var_name}' instead",
+                    line_num,
+                )
+            else:
+                raise ParserError(f"undefined variable '{var_name}'", line_num)
+        raise ParserError(f"name error: {e}", line_num)
+    except (ValueError, SyntaxError) as e:
+        print(e)
+        if isinstance(e, SyntaxError):
+            if "local." in expr_str:
+                raise ParserError(
+                    "use 'locals.var' instead of 'local.var'",
+                    line_num,
+                )
+            if "global." in expr_str:
+                raise ParserError(
+                    "use 'globals.var' instead of 'global.var'",
+                    line_num,
+                )
         debug_print(
             f"eval succeeded but couldn't convert to number: {e}, trying ast parse"
         )
@@ -402,17 +448,58 @@ def compile_value(
 
         expr = generate_expression(simplified, line_num)
 
+        globals_obj = type("Globals", (), {})()
+        for k, v in eval_globals.items():
+            setattr(globals_obj, k, v)
+
+        locals_obj = type("Locals", (), {})()
+        for k, v in loop_vars.items():
+            setattr(locals_obj, k, v)
+
         eval_namespace = {
             "__builtins__": builtins.__dict__,
-            "globals": type("Globals", (), eval_globals)(),
-            "local": type("Local", (), loop_vars)(),
-            **eval_globals,
+            "globals": globals_obj,
+            "locals": locals_obj,
             **math_funcs,
         }
-        result = num(eval(expr, eval_namespace))
-        debug_print(f"ast parse succeeded: {result}")
-        return result
+
+        try:
+            result = num(eval(expr, eval_namespace))
+            debug_print(f"ast parse succeeded: {result}")
+            return result
+        except NameError as e:
+            error_msg = str(e)
+            if "is not defined" in error_msg:
+                var_name = error_msg.split("'")[1] if "'" in error_msg else "unknown"
+                if var_name == "local":
+                    raise ParserError(
+                        "use 'locals.var' instead of 'local.var'",
+                        line_num,
+                    )
+                if var_name == "global":
+                    raise ParserError(
+                        "use 'globals.var' instead of 'global.var'",
+                        line_num,
+                    )
+
+                if var_name in eval_globals:
+                    raise ParserError(
+                        f"cannot access global '{var_name}' directly! use 'globals.{var_name}' instead",
+                        line_num,
+                    )
+                elif var_name in loop_vars:
+                    raise ParserError(
+                        f"cannot access local '{var_name}' directly! use 'locals.{var_name}' instead",
+                        line_num,
+                    )
+                else:
+                    raise ParserError(f"undefined variable '{var_name}'", line_num)
+            raise ParserError(f"name error: {e}", line_num)
+
     except Exception as e:
+        if possible_result is not None:
+            raise ParserError(f"blocked python parsing: {expr_str}")
+
         raise ParserError(f"failed to compile value: {e}", line_num)
 
 
@@ -1364,15 +1451,14 @@ def unwrap_loop(
         if iter_var:
             iteration_code_globals[iter_var] = iteration
 
-        local_substitutions = {}
-        if iter_var:
-            local_substitutions[iter_var] = str(iteration)
-
         for local_name, local_expr, def_line_num in local_defs:
             current_expr = local_expr
-            for sub_name, sub_val in local_substitutions.items():
+
+            if iter_var:
                 current_expr = re.sub(
-                    r"\b" + re.escape(sub_name) + r"\b", str(sub_val), current_expr
+                    r"(?<!local\.)(?<!locals\.)\b" + re.escape(iter_var) + r"\b",
+                    str(iteration),
+                    current_expr,
                 )
 
             try:
@@ -1380,25 +1466,21 @@ def unwrap_loop(
                     current_expr, iteration_code_globals, def_line_num, config, {}
                 )
                 iteration_code_globals[local_name] = evaluated_val
-                local_substitutions[local_name] = str(evaluated_val)
                 debug_print(
                     f"successfully evaluated local {local_name} = {evaluated_val}"
                 )
             except Exception as e:
-                local_substitutions[local_name] = f"({current_expr})"
-                debug_print(f"keeping local {local_name} as template: {current_expr}")
+                debug_print(f"failed to evaluate local {local_name}: {e}")
 
         for line_num, line in non_local_lines:
             new_line = line
-            for sub_name, sub_val in local_substitutions.items():
+
+            if iter_var:
                 new_line = re.sub(
-                    r"\b" + re.escape(sub_name) + r"\b", str(sub_val), new_line
+                    r"(?<!local\.)(?<!locals\.)\b" + re.escape(iter_var) + r"\b",
+                    str(iteration),
+                    new_line,
                 )
-            for const_name, const_val in iteration_code_globals.items():
-                if const_name not in local_substitutions:
-                    new_line = re.sub(
-                        r"\b" + re.escape(const_name) + r"\b", str(const_val), new_line
-                    )
 
             unwrapped.append((line_num, new_line))
 
@@ -1552,12 +1634,16 @@ def expand_loops(code: List[str], config: ProgramConfig) -> List[Tuple[int, str]
                     if iter_var:
                         iter_code_globals[iter_var] = iteration
 
+                    iter_loop_vars = {}
                     for local_name, local_expr, def_line_num in local_defs:
                         current_expr = local_expr
-                        for var_name, var_val in iter_context.items():
+
+                        if iter_var:
                             current_expr = re.sub(
-                                r"\b" + re.escape(var_name) + r"\b",
-                                str(var_val),
+                                r"(?<!local\.)(?<!locals\.)\b"
+                                + re.escape(iter_var)
+                                + r"\b",
+                                str(iteration),
                                 current_expr,
                             )
 
@@ -1567,14 +1653,40 @@ def expand_loops(code: List[str], config: ProgramConfig) -> List[Tuple[int, str]
                                 iter_code_globals,
                                 def_line_num,
                                 config,
-                                {},
+                                iter_loop_vars,
                             )
                             iter_code_globals[local_name] = evaluated_val
-                            iter_context[local_name] = str(evaluated_val)
-                        except:
-                            iter_context[local_name] = f"({current_expr})"
+                            iter_loop_vars[local_name] = evaluated_val
+                            debug_print(
+                                f"successfully evaluated local {local_name} = {evaluated_val}"
+                            )
+                        except ParserError:
+                            raise
+                        except Exception as e:
+                            debug_print(f"failed to evaluate local {local_name}: {e}")
 
-                    body_as_list = [line for _, line in non_local_lines]
+                    body_as_list = []
+                    for line_num, body_line in non_local_lines:
+                        processed_line = body_line
+
+                        for var_name, var_val in iter_context.items():
+                            processed_line = re.sub(
+                                r"(?<!local\.)(?<!locals\.)\b"
+                                + re.escape(var_name)
+                                + r"\b",
+                                str(var_val),
+                                processed_line,
+                            )
+
+                        for local_name, local_val in iter_loop_vars.items():
+                            processed_line = re.sub(
+                                r"\b" + re.escape(local_name) + r"\b",
+                                str(local_val),
+                                processed_line,
+                            )
+
+                        body_as_list.append(processed_line)
+
                     nested_expanded = expand_with_context(body_as_list, iter_context)
                     expanded_code.extend(nested_expanded)
 
@@ -1583,7 +1695,7 @@ def expand_loops(code: List[str], config: ProgramConfig) -> List[Tuple[int, str]
                 processed_line = line
                 for var_name, var_val in loop_context.items():
                     processed_line = re.sub(
-                        r"\b" + re.escape(var_name) + r"\b",
+                        r"(?<!local\.)(?<!locals\.)\b" + re.escape(var_name) + r"\b",
                         str(var_val),
                         processed_line,
                     )
@@ -1732,8 +1844,12 @@ def compile_instructions(
     return results
 
 
-def parse_program(code: List[str]) -> List[Tuple[str, Tuple[str, Optional[str]]]]:
+def parse_program(
+    code: List[str], safe_eval: bool
+) -> List[Tuple[str, Tuple[str, Optional[str]]]]:
     verbose_print("starting program parsing")
+    if safe_eval:
+        verbose_print("safe evaluation ON")
 
     config = ProgramConfig()
 
@@ -1769,7 +1885,7 @@ examples:
         "--version",
         action="version",
         version=f"Paramath {PROGRAM_VERSION}",
-        help="Prints the Paramath version number and exits",
+        help="prints the Paramath version number and exits",
     )
     parser.add_argument(
         "-o",
@@ -1790,6 +1906,12 @@ examples:
         action="store_true",
         help="print out the compiled output",
     )
+    parser.add_argument(
+        "-S",
+        "--safe-eval",
+        action="store_true",
+        help="prints and blocks python code from evaluating and exits, used for safely running unknown scripts",
+    )
     parser.add_argument("-L", "--logfile", metavar="FILE", help="write logs to FILE")
     args = parser.parse_args()
 
@@ -1798,6 +1920,7 @@ examples:
     DEBUG = args.debug
     LOGFILE = args.logfile
     PRINT_OUTPUT = args.print_output
+    SAFE_EVAL = args.safe_eval
 
     if LOGFILE:
         with open(LOGFILE, "w") as f:
@@ -1806,7 +1929,9 @@ examples:
     try:
         if args.filepath is None:
             raise ParserError("No path to file provided, quitting")
-        print(f"reading: {args.filepath}")
+        print(f"reading {args.filepath}")
+        if SAFE_EVAL:
+            print("[safe evaluation enabled")
         if DEBUG:
             print("[debug mode enabled]")
         if VERBOSE:
@@ -1819,7 +1944,7 @@ examples:
         with open(args.filepath) as f:
             code = f.read().strip().replace(";", "\n").split("\n")
 
-        results = parse_program(code)
+        results = parse_program(code, SAFE_EVAL)
 
         with open(args.output, "w") as f:
             for result, output in results:
