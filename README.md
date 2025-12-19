@@ -28,7 +28,7 @@ note to self to finish this PLEASE
 
 > note to self pls upload to pypi
 
-To install the latest release, just install it fron PyPI using:
+To install the latest release, just install it from PyPI using:
 
 ```
 pip install paramath

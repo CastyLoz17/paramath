@@ -165,7 +165,7 @@ class ProgramConfig:
     functions: Dict[str, Function] = field(default_factory=dict)
     aliases: Dict[str, str] = field(default_factory=dict)
     precision: Optional[int] = 10
-    epsilon: Union[float, str] = 10e-99
+    epsilon: Union[float, str] = 1e-99
     current_epsilon: Union[float, str] = None
     current_precision: Optional[int] = None
     output_mode: Optional[Tuple[str, Optional[str]]] = None

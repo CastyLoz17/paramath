@@ -284,13 +284,13 @@ Sets the epsilon parameter for logical operations:
 
 > **Note:** Smaller epsilon = sharper decision boundaries. Recommended: `1e-99` for most use cases.
 
-#### `//variable`
+#### `//variables`
 
 Sets the letter variables that the compiler recognizes and accepts. Note that the variables `ans`, `pi`, and `e` cannot be changed.
 
 ```scheme
-//variable a b c d e f x y z m  # Default
-//variable m n o p q
+//variables a b c d e f x y z m  # Default
+//variables m n o p q
 ```
 
 #### `//simplify`
@@ -997,7 +997,7 @@ If you're migrating from v0.4, here are the key changes:
 
 Paramath is an evolving language. Contributions and feedback are welcome!
 
-**Version**: 2.0  
+**Version**: 2.2.2  
 **License**: MIT  
 **GitHub**: https://github.com/kaemori/paramath
 
