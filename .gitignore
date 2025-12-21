@@ -31,6 +31,8 @@ Thumbs.db
 _gitignored/
 paramath_tests/*.out
 tests/__pycache__/
+logfile.txt
+math.txt
 
 # ─── neural experiments (big chungus files) 
 *_compact.txt

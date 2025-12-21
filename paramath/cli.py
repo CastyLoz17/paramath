@@ -519,36 +519,24 @@ def collect_codeblock(
         line_num, line = expanded_code[i]
 
         if line.lower().startswith("//ret"):
-            if current_expr_lines:
-                raise ParserError(
-                    "found //ret but previous expression has no variable assignment",
-                    line_num,
-                )
             parts = line.split(None, 1)
-            if len(parts) >= 2:
-                ret_expr = parts[1]
-                paren_depth = sum(
-                    1 if c == "(" else -1 if c == ")" else 0 for c in ret_expr
-                )
-                if paren_depth == 0:
-                    ret_expr_stripped = ret_expr.strip()
-                    if not ret_expr_stripped.startswith("("):
-                        tokens_test = ret_expr_stripped.split()
-                        if len(tokens_test) > 1:
-                            ret_expr = f"({ret_expr})"
-                    block.ret_expr = ret_expr
-                    block.line_end = line_num
-                    debug_print(f"collected complete ret expr: {ret_expr}...")
-                    return block, i - start_idx + 1
-                else:
-                    current_expr_lines.append(ret_expr)
-                    in_ret_expr = True
-                    ret_start_line = line_num
-            else:
-                in_ret_expr = True
-                ret_start_line = line_num
-            i += 1
-            continue
+            ret_lines = [parts[1]] if len(parts) >= 2 else []
+
+            while i + 1 < len(expanded_code):
+                next_line_num, next_line = expanded_code[i + 1]
+
+                if next_line.lower().startswith("//"):
+                    break
+
+                ret_lines.append(next_line)
+                i += 1
+
+            ret_expr = " ".join(ret_lines)
+            if not ret_expr.startswith("("):
+                ret_expr = f"({ret_expr})"
+            block.ret_expr = ret_expr
+            block.line_end = expanded_code[i][0]
+            return block, i - start_idx + 1
 
         if line.lower().startswith("//"):
             if current_expr_lines:
@@ -620,7 +608,6 @@ def expand_intermediates(
         for var_name, var_expr in intermediates.items():
             pattern = r"\b" + re.escape(var_name) + r"\b"
             if re.search(pattern, result):
-                # check if var_expr needs wrapping
                 expr_to_sub = var_expr.strip()
                 if not (expr_to_sub.startswith("(") and expr_to_sub.endswith(")")):
                     expr_to_sub = f"({expr_to_sub})"
@@ -637,7 +624,6 @@ def expand_intermediates(
         raise ParserError(
             "infinite loop detected in intermediate variable substitution", line_num
         )
-
     return result
 
 
@@ -1569,19 +1555,16 @@ def collect_function_body(
             continue
 
         if line.lower().startswith("//def"):
-            depth += 1
-            debug_print(f"nested def, depth now {depth + 1}")
-        elif line.lower().startswith("//enddef"):
-            if depth == 0:
-                verbose_print(f"collected function body: {len(func_lines)} lines")
-                return func_lines, i - start_idx + 1
-            depth -= 1
-            debug_print(f"nested enddef, depth now {depth + 1}")
+            raise ParserError("nested //def inside function", line_num)
+        elif line.lower().startswith("//ret"):
+            func_lines.append((line_num, line))
+            verbose_print(f"collected function body: {len(func_lines)} lines")
+            return func_lines, i - start_idx + 1
 
         func_lines.append((line_num, line))
         i += 1
 
-    raise ParserError("//def without matching //enddef", start_idx + 1)
+    raise ParserError("//def without matching //ret", start_idx + 1)
 
 
 def replace_in_ast(ast: Any, pattern: Any, replacement: str) -> Any:
@@ -1696,12 +1679,30 @@ def preprocess_functions(code: List[str], config: ProgramConfig):
 
             for body_line_num, body_line in func_lines:
                 if body_line.lower().startswith("//ret"):
-                    rest = (
-                        body_line.split(None, 1)[1]
-                        if len(body_line.split(None, 1)) > 1
-                        else ""
-                    )
-                    body_ret = rest
+                    parts = body_line.split(None, 1)
+                    if len(parts) >= 2:
+                        ret_expr = parts[1]
+                        paren_depth = sum(
+                            1 if c == "(" else -1 if c == ")" else 0 for c in ret_expr
+                        )
+
+                        if paren_depth == 0:
+                            body_ret = ret_expr
+                            continue
+
+                        ret_lines = [ret_expr]
+                        body_line_idx = func_lines.index((body_line_num, body_line)) + 1
+
+                        while body_line_idx < len(func_lines) and paren_depth != 0:
+                            next_line_num, next_line = func_lines[body_line_idx]
+                            ret_lines.append(next_line)
+                            paren_depth += sum(
+                                1 if c == "(" else -1 if c == ")" else 0
+                                for c in next_line
+                            )
+                            body_line_idx += 1
+
+                        body_ret = " ".join(ret_lines)
                 elif body_line.lower().startswith("//"):
                     continue
                 else:
@@ -1718,6 +1719,9 @@ def preprocess_functions(code: List[str], config: ProgramConfig):
             )
 
             tokens = tokenize(final_body_expr)
+            if tokens and tokens[0] != "(":
+                if len(tokens) > 1:
+                    tokens = ["("] + tokens + [")"]
             body_ast = parse_tokens(tokens, line_num)
 
             config.functions[func_name] = Function(
@@ -1757,6 +1761,13 @@ def expand_loops(
                     check_line = lines[i].split("#")[0].strip()
                     if check_line.lower().startswith("//def"):
                         depth += 1
+                    elif check_line.lower().startswith("//ret"):
+                        if depth == 0:
+                            i += 1
+                            break
+                        depth -= 1
+                        i += 1
+                        continue
                     elif check_line.lower().startswith("//enddef"):
                         if depth == 0:
                             i += 1
@@ -1992,7 +2003,6 @@ def process_instructions(
 
         ret_expr = block.ret_expr
 
-        # First, expand intermediates normally
         processed_intermediates = {}
         for var_name, var_expr in block.intermediates.items():
             processed_intermediates[var_name] = var_expr
@@ -2001,14 +2011,12 @@ def process_instructions(
             ret_expr, processed_intermediates, block.line_end
         )
 
-        # Parse into AST
         try:
             tokens = tokenize(final_expr)
             ast = parse_tokens(tokens, block.line_start)
         except ParserError as e:
             raise ParserError(str(e), block.line_start)
 
-        # NOW expand lambda calls in the AST
         if block.lambda_intermediates:
             ast = expand_lambda_calls_ast(
                 ast, block.lambda_intermediates, block.line_start
@@ -2222,9 +2230,9 @@ examples:
 
         with open(args.output, "w") as f:
             for result, output in results:
-                # result = (
-                #     result.replace("**", "^").replace("*", "").replace("ans", "ANS")
-                # )
+                result = (
+                    result.replace("**", "^").replace("*", "").replace("ans", "ANS")
+                )
                 if PRINT_OUTPUT:
                     print(f"to {output}:")
                     print(result)

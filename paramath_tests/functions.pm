@@ -6,15 +6,12 @@
 # define some functions to test
 //def square $x
 //ret (* $x 2)
-//enddef
 
 //def add3 $a $b $c
 //ret (+ $a $b $c)
-//enddef
 
 //def nested $x
 //ret (square (+ $x 1))
-//enddef
 
 # test 1: basic function call
 //display
@@ -31,7 +28,6 @@
 # test 4: functions calling other functions
 //def combo $x $y
 //ret (+ (square $x) (square $y))
-//enddef
 
 //display
 //ret (combo 3 4)

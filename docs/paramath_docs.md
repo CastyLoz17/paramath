@@ -1,4 +1,4 @@
-# Paramath Language Specification v2.0
+# Paramath Language Specification v2.2.2
 
 _A differentiable programming language for continuous computation_
 
@@ -18,8 +18,9 @@ _A differentiable programming language for continuous computation_
 10. [Intermediates and Code Blocks](#intermediates-and-code-blocks)
 11. [Advanced Features](#advanced-features)
 12. [Complete Examples](#complete-examples)
-13. [Error Reference](#error-reference)
-14. [Best Practices](#best-practices)
+13. [Command-Line Interface](#command-line-interface)
+14. [Error Reference](#error-reference)
+15. [Best Practices](#best-practices)
 
 ---
 
@@ -105,6 +106,38 @@ You can also set precision for individual constants:
 //precision 10
 //global E_PRECISE e   # Evaluates e to 10 decimal places
 ```
+
+### Python Expression Evaluation
+
+Both `//global` and `//local` support evaluating Python expressions! This lets you compute values using Python's standard library and previously defined globals/locals:
+
+```scheme
+# Simple arithmetic (evaluated as Python)
+//global LENGTH len("hello world")
+
+# Reference previously defined globals
+//global RADIUS 5
+//global AREA (globals.RADIUS ** 2 * 3.14159)
+
+# In loops with //local, reference loop-scoped variables
+//repeat 5 i
+  //local squared locals.i ** 2
+  //local doubled globals.LENGTH + i
+  //ret (+ squared doubled)
+//endrepeat
+```
+
+**Available Python Functions:**
+
+-   All math functions: `sin`, `cos`, `tan`, `asin`, `acos`, `atan`, `arcsin`, `arccos`, `arctan`, `abs`, `pi`, `e`
+-   Built-in functions: `len()`, `str()`, `int()`, `float()`, etc.
+-   Access to `globals` and `locals` as special namespaces
+
+**Important Notes:**
+
+-   Access globals with `globals.VARIABLE_NAME` (NOT `global.VARIABLE_NAME`)
+-   Access locals with `locals.VARIABLE_NAME` (NOT `local.VARIABLE_NAME`)
+-   Evaluate to numeric values that can be used in expressions
 
 ### Aliases
 
@@ -206,13 +239,11 @@ Example:
 
 A Paramath program consists of:
 
-1. **Configuration** (optional): Precision, epsilon, optimization settings
-2. **Globals** (optional): Named constant definitions
-3. **Aliases** (optional): Alternative variable names
+1. **Aliases** (optional): Alternative variable names
+2. **Configuration** (optional): Precision, epsilon, optimization settings
+3. **Globals** (optional): Named constant definitions
 4. **Functions** (optional): User-defined functions
 5. **Code blocks**: Computation blocks with output directives
-
-> **Note:** Globals were named Constants before v0.4. Unlike Constants in v0.4, configurations and globals can appear anywhere! They only affect code that comes after them.
 
 ### Minimal Program
 
@@ -221,28 +252,27 @@ A Paramath program consists of:
 //ret (+ 2 2)
 ```
 
-> **Note:** The final surrounding parentheses are not necessarily needed if you're using a single-line string, but if any error occurs, surrounding the expression with parentheses usually resolves it.
+> **Note:** The final surrounding parentheses are not necessarily needed if you're using a single-line string, but if any error occurs, surrounding the expression with parentheses usually resolves it.)
 
 ### Complete Program Structure
 
 ```scheme
+# Aliases
+//alias r x
+
 # Configuration
 //precision 6
 //epsilon 1e-99
 //simplify true
-//dupe true
+//dupe true 0
 //sympy false
 
 # Constants
 //global RADIUS 5
 
-# Aliases
-//alias r x
-
 # Functions
 //def circle_area $r
 //ret (* pi (* $r $r))
-//enddef
 
 # Computation
 //display
@@ -271,7 +301,7 @@ Sets decimal precision for constant evaluation:
 //global PI_HIGH pi  # Evaluates to 10 decimals
 ```
 
-> **Note:** `pi` is calculated using python's math module, which provides up to 15 accurate significant decimals, and reaches 17 decimal places. If a higher precision is needed, creating a custom `//global PI_ACCURATE` would be the most elegant solution.
+> **Note:** `pi` is calculated using python's math module, which provides up to 15 accurate significant decimals, and reaches 17 decimal places. If a higher precision is needed, creating a custom `//global PI_ACCURATE` would be the most elegant solution. Note that using `pi` as a variable instead is also recommended, as the compiler assumes the `pi` variable instead of the literal on the calculator, resulting in less characters in the final output (e.g. ` (* 4 pi)` instead of `(* 4 3.1415926535)`)
 
 #### `//epsilon`
 
@@ -284,13 +314,13 @@ Sets the epsilon parameter for logical operations:
 
 > **Note:** Smaller epsilon = sharper decision boundaries. Recommended: `1e-99` for most use cases.
 
-#### `//variable`
+#### `//variables`
 
 Sets the letter variables that the compiler recognizes and accepts. Note that the variables `ans`, `pi`, and `e` cannot be changed.
 
 ```scheme
-//variable a b c d e f x y z m  # Default
-//variable m n o p q
+//variables a b c d e f x y z m  # Default
+//variables m n o p q
 ```
 
 #### `//simplify`
@@ -304,7 +334,7 @@ Enables/disables compile-time simplification of literal expressions:
 
 #### `//dupe`
 
-Enables/disables duplicate subexpression detection, with optional input for how much savings there must be before the subexpression is extracted:
+Enables/disables duplicate subexpression detection, with optional second parameter for minimum savings threshold:
 
 ```scheme
 //dupe true       # Default: extracts repeated subexpressions
@@ -350,7 +380,7 @@ Store result in a variable:
 //ret (* x 2)  # Uses stored value
 ```
 
-Valid variable names: `a`, `b`, `c`, `d`, `e`, `f`, `x`, `y`, `m`
+Default variable names: `a`, `b`, `c`, `d`, `e`, `f`, `x`, `y`, `m`
 
 ---
 
@@ -361,7 +391,6 @@ Valid variable names: `a`, `b`, `c`, `d`, `e`, `f`, `x`, `y`, `m`
 ```scheme
 //def function_name $param1 $param2 ...
 //ret (function body)
-//enddef
 ```
 
 -   Function names are case-insensitive
@@ -373,27 +402,15 @@ Valid variable names: `a`, `b`, `c`, `d`, `e`, `f`, `x`, `y`, `m`
 ```scheme
 //def square $x
 //ret (* $x $x)
-//enddef
 
 //def distance $x1 $y1 $x2 $y2
 //ret (** (+ (** (- $x2 $x1) 2) (** (- $y2 $y1) 2)) 0.5)
-//enddef
 
 //display
 //ret (distance 0 0 3 4)  # Returns 5.0
 ```
 
-### Recursion
-
-Functions can call themselves:
-
-```scheme
-//def factorial $n
-//ret (if (<= $n 1)
-        1
-        (* $n (factorial (- $n 1))))
-//enddef
-```
+> **Note:** Recursion is strictly prohibited; This is because functions are unwrapped at compile time, and it will unwrap until Python raises a `RecursionError` error.
 
 ---
 
@@ -429,6 +446,35 @@ Anonymous functions for one-time use.
 -   Body is a single expression (no `//ret` needed!)
 
 > **Note:** I mainly added this feature as a joke and a tribute to lisp. This has no practical use cases whatever, but feel free to use it!
+
+### Lambda Assignments with Walrus Operator
+
+You can assign lambdas to variables for reuse **within the same code block** using the `:=` (walrus) operator:
+
+```scheme
+//display
+double := (lambda ($x) (* $x 2))
+triple := (lambda ($x) (* $x 3))
+
+//ret (+ (double 5) (triple 5))  # Returns 25 (10 + 15)
+```
+
+**How It Works:**
+
+-   Lambdas are stored as **lambda intermediates** using `:=` instead of `=`
+-   They can be called like regular functions in the same code block
+-   Each lambda call gets expanded and substituted at compile time
+
+**Example with Nested Lambdas:**
+
+```scheme
+//display
+compose := (lambda ($f $g $x) ($f ($g $x)))
+add_one := (lambda ($n) (+ $n 1))
+double := (lambda ($n) (* $n 2))
+
+//ret (compose double add_one 5)  # ((double (add_one 5))) = 12
+```
 
 ---
 
@@ -609,7 +655,6 @@ The compiler tracks expression length and tries to minimize it:
   term4 = (+ term3 $c)
   term5 = (* term4 $x)
   //ret (+ term5 $d)
-//enddef
 
 //display
 //ret (horner x 2 -3 1 5)
@@ -637,11 +682,9 @@ The compiler tracks expression length and tries to minimize it:
 
 //def dot_product $ax $ay $bx $by
 //ret (+ (* $ax $bx) (* $ay $by))
-//enddef
 
 //def magnitude $x $y
 //ret (** (+ (* $x $x) (* $y $y)) 0.5)
-//enddef
 
 //display
 vec1_mag = (magnitude x1 y1)
@@ -657,20 +700,16 @@ dot = (dot_product x1 y1 x2 y2)
 
 //def sigmoid $x
 //ret (/ 1 (+ 1 (** e (* -1 $x))))
-//enddef
 
 //def tanh_approx $x
 //ret (- (* 2 (sigmoid (* 2 $x))) 1)
-//enddef
 
 //def relu $x
 //ret (max0 $x)
-//enddef
 
 //def gelu $x
   sig = (sigmoid (* 1.702 $x))
   //ret (* $x sig)
-//enddef
 
 //display
 //ret (gelu x)
@@ -687,11 +726,9 @@ dot = (dot_product x1 y1 x2 y2)
   f_plus = ($f x_plus_h)
   f_minus = ($f x_minus_h)
   //ret (/ (- f_plus f_minus) (* 2 H))
-//enddef
 
 //def my_function $x
 //ret (* $x (* $x $x))  # x³
-//enddef
 
 //display
 //ret (derivative my_function x)  # Should be ~3x²
@@ -709,6 +746,98 @@ dot = (dot_product x1 y1 x2 y2)
   //display
   //ret (+ (* x_pos x_pos) (* y_pos y_pos))  # Should be 1 (circle!)
 //endrepeat
+```
+
+---
+
+## Command-Line Interface
+
+### Basic Usage
+
+```bash
+paramath [options] filepath
+```
+
+### Options
+
+| Flag      | Long Form        | Description                                           | Example                            |
+| --------- | ---------------- | ----------------------------------------------------- | ---------------------------------- |
+| `-h`      | `--help`         | Show help message                                     | `paramath --help`                  |
+| `-v`      | `--version`      | Print version and exit                                | `paramath --version`               |
+| `-o FILE` | `--output FILE`  | Output file (default: `math.txt`)                     | `paramath input.pm -o results.txt` |
+| `-D`      | `--debug`        | Enable debug output                                   | `paramath input.pm -D`             |
+| `-V`      | `--verbose`      | Enable verbose output                                 | `paramath input.pm -V`             |
+| `-O`      | `--print-output` | Print compiled output to console                      | `paramath input.pm -O`             |
+| `-S`      | `--safe-eval`    | Block Python code evaluation and print what would run | `paramath unknown.pm -S`           |
+| `-L FILE` | `--logfile FILE` | Write logs to FILE                                    | `paramath input.pm -L debug.log`   |
+
+### Flag Details
+
+#### `-O` / `--print-output`
+
+Prints the compiled mathematical expressions to stdout:
+
+```bash
+$ paramath myfile.pm -O
+reading myfile.pm
+
+to ('display', None):
+(sin(x))+1
+to ('display', None):
+(cos(x))+2
+
+=== compilation successful! ===
+generated 2 expressions
+written to: math.txt
+```
+
+#### `-S` / `--safe-eval`
+
+**Security feature**: Blocks execution of Python code in `//global` and `//local` expressions. This lets you safely inspect unknown paramath files before running them:
+
+```bash
+$ paramath untrusted.pm -S
+reading untrusted.pm
+[safe evaluation enabled]
+# ... would print what Python code would execute, then exit without running it
+```
+
+Use this when:
+
+-   Running untrusted `.pm` files
+-   Reviewing user-submitted paramath code
+-   Auditing what Python expressions will be evaluated
+
+#### `-D` / `--debug`
+
+Enables detailed debug output showing parsing steps, optimization decisions, etc. Useful for understanding how the compiler works.
+
+#### `-V` / `--verbose`
+
+Enables verbose output showing high-level compilation progress.
+
+#### `-L` / `--logfile FILE`
+
+Writes all debug and verbose output to a file instead of stdout:
+
+```bash
+paramath myfile.pm -D -V -L compiler.log
+```
+
+### Examples
+
+```bash
+# Compile with verbose output and save to custom file
+paramath myprogram.pm -Vo results.txt
+
+# Compile, print output, and save debug log
+paramath myprogram.pm -ODL debug.log
+
+# Check unknown file before running (safe eval)
+paramath untrusted.pm -S
+
+# Minimal compilation (quiet)
+paramath myprogram.pm
 ```
 
 ---
@@ -752,7 +881,6 @@ dot = (dot_product x1 y1 x2 y2)
 | ----------------------------------------- | ---------------------- | ------------------------- |
 | `function 'X' expects N arguments, got M` | Wrong argument count   | Check function definition |
 | `function parameters must start with $`   | Invalid parameter name | Use `$param` format       |
-| `//enddef without //def`                  | Mismatched tags        | Check structure           |
 
 ### Lambda Errors
 
@@ -846,22 +974,18 @@ When `//dupe true`, the compiler may create hidden intermediates that clobber `a
 # Bad: monolithic function
 //def neural_network $x
 //ret (... 50 lines of nested operations ...)
-//enddef
 
 # Good: modular design
 //def sigmoid $x
 //ret (/ 1 (+ 1 (** e (* -1 $x))))
-//enddef
 
 //def layer $x $w $b
 //ret (sigmoid (+ (* $w $x) $b))
-//enddef
 
 //def neural_network $x
   h1 = (layer $x 0.5 0.1)
   h2 = (layer h1 0.3 -0.2)
   //ret (layer h2 0.8 0.0)
-//enddef
 ```
 
 ### 7. Comment Your Epsilon Choices
@@ -899,7 +1023,7 @@ program        ::= (pragma | function | code_block)*
 
 pragma         ::= "//" pragma_name pragma_args?
 pragma_name    ::= "precision" | "epsilon" | "global" | "alias" |
-                   "display" | "store" | "ret" | "simplify" | "dupe" |
+                   "display" | "store" | "ret" | "simplify" | "dupe" | "variables" |
                    "def" | "enddef" | "repeat" | "endrepeat" | "local"
 
 code_block     ::= output_directive intermediate* ret_directive
@@ -909,7 +1033,7 @@ ret_directive  ::= "//ret" expression newline?
 
 function       ::= "//def" func_name param* newline
                    intermediate* ret_directive newline
-                   "//enddef"
+                   "
 
 loop           ::= "//repeat" expression identifier? newline
                    (pragma | local_def | intermediate | ret_directive)*
@@ -938,66 +1062,11 @@ identifier     ::= (alpha | "_") (alpha | digit | "_")*
 
 ---
 
-## Migration Guide from v0.4
-
-If you're migrating from v0.4, here are the key changes:
-
-### What's New
-
-1. **Loops**: `//repeat` and `//endrepeat` for iteration
-2. **Locals**: `//local` for loop-scoped variables
-3. **Intermediates**: Named subexpressions in code blocks
-4. **Flexible constants**: `//global` can appear anywhere (renamed from `//const`)
-5. **Aliases**: `//alias` for alternative variable names
-6. **Return directive**: `//ret` explicitly marks the return value
-7. **Built-in operations**: `mod`, `frac`, `nat` are now first-class
-8. **Better optimization**: Improved duplicate detection
-
-### What Changed
-
-1. `//const` → `//global` (more accurate name)
-2. Bare expressions → must use `//ret` in functions and code blocks
-3. `//then` → removed (no longer needed with `//ret`)
-4. Constants can be defined anywhere, not just at the start
-
-### Example Migration
-
-**v0.4 code:**
-
-```scheme
-//precision 6
-//const RADIUS 5
-
-//def area $r
-(* pi (* $r $r))
-//enddef
-
-//display
-(area RADIUS)
-//then
-```
-
-**v2.0 code:**
-
-```scheme
-//precision 6
-//global RADIUS 5
-
-//def area $r
-//ret (* pi (* $r $r))
-//enddef
-
-//display
-//ret (area RADIUS)
-```
-
----
-
 ## Contributing
 
 Paramath is an evolving language. Contributions and feedback are welcome!
 
-**Version**: 2.0  
+**Version**: 2.2.2
 **License**: MIT  
 **GitHub**: https://github.com/kaemori/paramath
 
